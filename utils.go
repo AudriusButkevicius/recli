@@ -15,7 +15,19 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/pkg/errors"
+
 	"github.com/urfave/cli"
+)
+
+type ParseDefaulter interface {
+	ParseDefault(string) error
+}
+
+var (
+	textMarshaler   = reflect.TypeOf(new(encoding.TextMarshaler)).Elem()
+	textUnmarshaler = reflect.TypeOf(new(encoding.TextUnmarshaler)).Elem()
+	defaultParser   = reflect.TypeOf(new(ParseDefaulter)).Elem()
 )
 
 func hasTag(field reflect.StructField, tag Tag) bool {
@@ -34,7 +46,7 @@ func simplifyKind(k reflect.Kind) reflect.Kind {
 	return k
 }
 
-func unsupportedKind(k reflect.Kind) error {
+func unsupportedKindErr(k reflect.Kind) error {
 	_, fn, line, _ := runtime.Caller(1)
 	fileParts := strings.Split(fn, "/")
 	return fmt.Errorf("unsupported kind: %s [%s:%d]", k, fileParts[len(fileParts)-1], line)
@@ -62,7 +74,8 @@ func toLowerDashCase(arg string) string {
 }
 
 func getPrimitiveValue(v reflect.Value) (interface{}, error) {
-	if v.CanInterface() && v.CanAddr() {
+	// Always expect a non-pointer
+	if v.CanAddr() && v.Addr().CanInterface() {
 		if m, ok := v.Addr().Interface().(encoding.TextMarshaler); ok {
 			v, err := m.MarshalText()
 			return string(v), err
@@ -80,11 +93,12 @@ func getPrimitiveValue(v reflect.Value) (interface{}, error) {
 	case reflect.String:
 		return v.String(), nil
 	}
-	return nil, unsupportedKind(k)
+	return nil, unsupportedKindErr(k)
 }
 
 func setPrimitiveValueFromString(v reflect.Value, arg string) error {
-	if v.CanInterface() && v.CanAddr() {
+	// Always expect a non-pointer
+	if v.CanAddr() && v.Addr().CanInterface() {
 		if m, ok := v.Addr().Interface().(encoding.TextUnmarshaler); ok {
 			return m.UnmarshalText([]byte(arg))
 		}
@@ -119,8 +133,9 @@ func setPrimitiveValueFromString(v reflect.Value, arg string) error {
 		v.SetString(arg)
 
 	default:
-		return unsupportedKind(k)
+		return unsupportedKindErr(k)
 	}
+
 	return nil
 }
 
@@ -140,4 +155,61 @@ func expectArgs(n int, actionFunc cli.ActionFunc) cli.ActionFunc {
 		}
 		return actionFunc(ctx)
 	}
+}
+
+func setDefaults(tagName string, data interface{}) error {
+	s := reflect.ValueOf(data).Elem()
+	t := s.Type()
+
+	for i := 0; i < s.NumField(); i++ {
+		f := deref(s.Field(i))
+		tag := t.Field(i).Tag
+
+		v := tag.Get(tagName)
+		if len(v) > 0 {
+			if f.CanAddr() && f.Addr().CanInterface() {
+				if i, ok := f.Addr().Interface().(ParseDefaulter); ok {
+					return i.ParseDefault(v)
+				}
+			}
+
+			if isPrimitive(f) {
+				return setPrimitiveValueFromString(f, v)
+			}
+
+			switch f.Kind() {
+			case reflect.Array, reflect.Slice:
+				switch simplifyKind(f.Elem().Kind()) {
+				case reflect.Int:
+					var m []int
+					for _, si := range strings.Split(v, ",") {
+						i, err := strconv.ParseInt(si, 10, 64)
+						if err != nil {
+							return err
+						}
+						m = append(m, int(i))
+					}
+					f.Set(reflect.ValueOf(m))
+					return nil
+				case reflect.String:
+					var m []string
+					for _, i := range strings.Split(v, ",") {
+						m = append(m, i)
+					}
+					f.Set(reflect.ValueOf(m))
+					return nil
+				}
+			}
+
+			return errors.Wrap(unsupportedKindErr(f.Kind()), "setDefaults")
+		}
+	}
+	return nil
+}
+
+func deref(v reflect.Value) reflect.Value {
+	for v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	return v
 }

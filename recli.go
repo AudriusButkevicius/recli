@@ -11,8 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-	"strconv"
-	"strings"
 
 	"github.com/pkg/errors"
 
@@ -173,6 +171,27 @@ func (c *constructor) makeMapCommands(v reflect.Value) []cli.Command {
 	}
 }
 
+func makeJsonDumper(v reflect.Value, printer func(string)) cli.Command {
+	return cli.Command{
+		Name:        "dump-json",
+		Description: "Dump item as json",
+		Action: expectArgs(0, func(ctx *cli.Context) error {
+			var vi interface{}
+			if v.CanAddr() && v.Addr().CanInterface() {
+				vi = v.Addr().Interface()
+			} else {
+				return fmt.Errorf("Cannot dump %s as json", v.Type())
+			}
+			bytes, err := json.MarshalIndent(vi, "", "  ")
+			if err != nil {
+				return err
+			}
+			printer(string(bytes))
+			return nil
+		}),
+	}
+}
+
 func (c *constructor) makeSliceAccessorCommands(keyer func(int) (string, error), v reflect.Value) ([]cli.Command, error) {
 	cmds := make([]cli.Command, 0, v.Len())
 	for vi := 0; vi < v.Len(); vi++ {
@@ -189,10 +208,9 @@ func (c *constructor) makeSliceAccessorCommands(keyer func(int) (string, error),
 				v.Set(reflect.AppendSlice(v.Slice(0, idx), v.Slice(idx+1, v.Len())))
 				return nil
 			}),
-		})
-		if err != nil {
-			return nil, err
-		}
+		}, makeJsonDumper(v.Index(idx), func(s string) {
+			c.cfg.ValuePrinter(s)
+		}))
 		cmds = append(cmds, cli.Command{
 			Name:        key,
 			Subcommands: keyCmds,
@@ -208,10 +226,10 @@ func (c *constructor) makeSliceCommands(v reflect.Value) ([]cli.Command, error) 
 		return fmt.Sprint(i), nil
 	}
 
-	primitive := isPrimitive(member.Kind())
+	primitive := isPrimitiveKind(member.Kind())
 
 	if !primitive && member.Kind() != reflect.Struct {
-		return nil, unsupportedKind(member.Kind())
+		return nil, unsupportedKindErr(member.Kind())
 	}
 
 	if !primitive {
@@ -232,6 +250,22 @@ func (c *constructor) makeSliceCommands(v reflect.Value) ([]cli.Command, error) 
 	} else {
 		cmds = append(cmds, accessCmds...)
 	}
+
+	cmds = append(cmds, cli.Command{
+		Name:  "list",
+		Usage: "List item keys in the collection",
+		Action: expectArgs(0, func(ctx *cli.Context) error {
+			for vi := 0; vi < v.Len(); vi++ {
+				idx := vi // Copy loop variable
+				key, err := keyer(idx)
+				if err != nil {
+					return err
+				}
+				c.cfg.ValuePrinter(key)
+			}
+			return nil
+		}),
+	})
 
 	if primitive {
 		cmds = append(cmds, cli.Command{
@@ -260,37 +294,42 @@ func (c *constructor) makeSliceItemBuilderFlags(memberType reflect.Type) []cli.F
 		memberField := memberType.Field(fi)
 		usage := ""
 		if defaultValueString, ok := memberField.Tag.Lookup(c.cfg.DefaultTagName); ok {
-			usage = fmt.Sprint("default value: %s", defaultValueString)
+			usage = fmt.Sprintf("default value: %s", defaultValueString)
 		}
 
-		switch simplifyKind(memberField.Type.Kind()) {
-		case reflect.Bool:
+		memberKind := simplifyKind(memberField.Type.Kind())
+		memberKindIsTextUnmarshaler := memberField.Type.Implements(textUnmarshaler)
+
+		switch {
+		case memberKind == reflect.Bool:
 			flags = append(flags, cli.BoolFlag{
 				Name:  c.cfg.FieldNameConverter(memberField.Name),
 				Usage: usage,
 			})
-		case reflect.String:
+		case memberKind == reflect.String || memberKindIsTextUnmarshaler:
 			flags = append(flags, cli.StringFlag{
 				Name:  c.cfg.FieldNameConverter(memberField.Name),
 				Usage: usage,
 			})
-		case reflect.Int:
+		case memberKind == reflect.Int:
 			flags = append(flags, cli.Int64Flag{
 				Name:  c.cfg.FieldNameConverter(memberField.Name),
 				Usage: usage,
 			})
-		case reflect.Float32, reflect.Float64:
+		case memberKind == reflect.Float32 || memberKind == reflect.Float64:
 			flags = append(flags, cli.Float64Flag{
 				Name:  c.cfg.FieldNameConverter(memberField.Name),
 				Usage: usage,
 			})
-		case reflect.Array, reflect.Slice:
-			switch simplifyKind(memberField.Type.Elem().Kind()) {
-			case reflect.Int:
+		case memberKind == reflect.Array || memberKind == reflect.Slice:
+			arrayKind := simplifyKind(memberField.Type.Elem().Kind())
+			arrayKindIsTextUnmarshaler := memberField.Type.Elem().Implements(textUnmarshaler)
+			switch {
+			case arrayKind == reflect.Int:
 				flags = append(flags, cli.Int64SliceFlag{
 					Name: c.cfg.FieldNameConverter(memberField.Name),
 				})
-			case reflect.String:
+			case arrayKind == reflect.String || arrayKindIsTextUnmarshaler:
 				flags = append(flags, cli.StringSliceFlag{
 					Name: c.cfg.FieldNameConverter(memberField.Name),
 				})
@@ -314,26 +353,24 @@ func (c *constructor) makeSliceItemBuilders(v reflect.Value) []cli.Command {
 				newValue := reflect.New(memberType).Elem()
 
 				// Set defaults
-				if err := c.setDefaults(newValue.Addr().Interface()); err != nil {
+				if err := setDefaults(c.cfg.DefaultTagName, newValue.Addr().Interface()); err != nil {
 					return err
 				}
 
 				for mi := 0; mi < newValue.NumField(); mi++ {
-					fieldType := memberType.Field(mi)
-					flagName := c.cfg.FieldNameConverter(fieldType.Name)
-					fieldValue := newValue.Field(mi)
+					flagName := c.cfg.FieldNameConverter(memberType.Field(mi).Name)
+					fieldValue := deref(newValue.Field(mi))
 					if ctx.IsSet(flagName) {
-						switch simplifyKind(fieldType.Type.Kind()) {
-						case reflect.Bool:
-							fieldValue.SetBool(ctx.Bool(flagName))
-						case reflect.String:
-							fieldValue.SetString(ctx.String(flagName))
-						case reflect.Int:
-							fieldValue.SetInt(ctx.Int64(flagName))
-						case reflect.Float32, reflect.Float64:
-							fieldValue.SetFloat(ctx.Float64(flagName))
+						if isPrimitive(fieldValue) {
+							if err := setPrimitiveValueFromString(fieldValue, ctx.Generic(flagName).(string)); err != nil {
+								return err
+							}
+							continue
+						}
+
+						switch fieldValue.Kind() {
 						case reflect.Array, reflect.Slice:
-							switch simplifyKind(fieldType.Type.Elem().Kind()) {
+							switch simplifyKind(fieldValue.Elem().Kind()) {
 							case reflect.Int:
 								fieldValue.Set(reflect.ValueOf(ctx.IntSlice(flagName)))
 							case reflect.String:
@@ -383,6 +420,7 @@ func (c *constructor) Construct(item interface{}) ([]cli.Command, error) {
 		if f.Anonymous || hasTag(f, c.cfg.SkipTag) || isUnexported {
 			continue
 		}
+
 		valueCmds, err := c.getCommandsForValue(v)
 		if err != nil {
 			return nil, errors.Wrap(err, f.Name)
@@ -393,119 +431,53 @@ func (c *constructor) Construct(item interface{}) ([]cli.Command, error) {
 			Subcommands: valueCmds,
 		})
 	}
+	cmds = append(cmds, makeJsonDumper(itemValue, func(s string) {
+		c.cfg.ValuePrinter(s)
+	}))
 
 	return cmds, nil
 }
 
-func isPrimitive(k reflect.Kind) bool {
+func isPrimitiveKind(k reflect.Kind) bool {
 	return (reflect.Bool <= k && k <= reflect.Float64) || k == reflect.String
 }
 
+func isPrimitive(v reflect.Value) bool {
+	v = deref(v)
+
+	k := v.Kind()
+	if isPrimitiveKind(k) {
+		return true
+	}
+
+	if v.CanAddr() && v.Addr().CanInterface() {
+		vi := v.Addr().Interface()
+		_, okm := vi.(encoding.TextMarshaler)
+		_, oku := vi.(encoding.TextUnmarshaler)
+		if okm && oku {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *constructor) getCommandsForValue(v reflect.Value) ([]cli.Command, error) {
+	v = deref(v)
 	k := v.Kind()
 
 	switch {
-	case isPrimitive(k):
+	case isPrimitive(v):
 		return c.makePrimitiveCommands(v), nil
 
 	case k == reflect.Map:
 		return c.makeMapCommands(v), nil
 
-		// Check that it's exported
-	case k == reflect.Struct && v.CanInterface():
+	case k == reflect.Struct && v.CanAddr() && v.Addr().CanInterface():
 		return c.Construct(v.Addr().Interface())
 
 	case k == reflect.Slice || k == reflect.Array:
 		return c.makeSliceCommands(v)
 	}
 
-	return nil, unsupportedKind(k)
-}
-
-func (c *constructor) setDefaults(data interface{}) error {
-	s := reflect.ValueOf(data).Elem()
-	t := s.Type()
-
-	for i := 0; i < s.NumField(); i++ {
-		f := s.Field(i)
-		tag := t.Field(i).Tag
-
-		v := tag.Get(c.cfg.DefaultTagName)
-		if len(v) > 0 {
-			if f.CanInterface() && f.CanAddr() {
-				if m, ok := f.Addr().Interface().(encoding.TextUnmarshaler); ok {
-					return m.UnmarshalText([]byte(v))
-				}
-			}
-
-			switch m := f.Interface().(type) {
-			case encoding.TextUnmarshaler:
-				return m.UnmarshalText([]byte(v))
-
-			case string:
-				f.SetString(v)
-
-			case int:
-				i, err := strconv.ParseInt(v, 10, 64)
-				if err != nil {
-					return err
-				}
-				f.SetInt(i)
-
-			case float64:
-				i, err := strconv.ParseFloat(v, 64)
-				if err != nil {
-					return err
-				}
-				f.SetFloat(i)
-
-			case bool:
-				i, err := strconv.ParseBool(v)
-				if err != nil {
-					return err
-				}
-				f.SetBool(i)
-
-			case []string:
-				for _, i := range strings.Split(v, ",") {
-					m = append(m, i)
-				}
-				f.Set(reflect.ValueOf(m))
-
-			case []int:
-				for _, si := range strings.Split(v, ",") {
-					i, err := strconv.ParseInt(si, 10, 64)
-					if err != nil {
-						return err
-					}
-					m = append(m, int(i))
-				}
-				f.Set(reflect.ValueOf(m))
-
-			case []float64:
-				for _, si := range strings.Split(v, ",") {
-					i, err := strconv.ParseFloat(si, 64)
-					if err != nil {
-						return err
-					}
-					m = append(m, float64(i))
-				}
-				f.Set(reflect.ValueOf(m))
-
-			case []bool:
-				for _, si := range strings.Split(v, ",") {
-					i, err := strconv.ParseBool(si)
-					if err != nil {
-						return err
-					}
-					m = append(m, i)
-				}
-				f.Set(reflect.ValueOf(m))
-
-			default:
-				return errors.Wrap(unsupportedKind(f.Kind()), "setDefaults")
-			}
-		}
-	}
-	return nil
+	return nil, unsupportedKindErr(k)
 }
