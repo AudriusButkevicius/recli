@@ -85,7 +85,9 @@ func (c *constructor) printValue(v reflect.Value) error {
 func (c *constructor) makePrimitiveCommands(v reflect.Value) []cli.Command {
 	cmds := []cli.Command{
 		{
-			Name: "get",
+			Name:     "get",
+			Usage:    "Get the value",
+			Category: "ACTIONS",
 			Action: expectArgs(0, func(ctx *cli.Context) error {
 				return c.printValue(v)
 			}),
@@ -96,6 +98,8 @@ func (c *constructor) makePrimitiveCommands(v reflect.Value) []cli.Command {
 		cmds = append(cmds, cli.Command{
 			Name:      "set",
 			ArgsUsage: "[value]",
+			Usage:     "Set the value",
+			Category:  "ACTIONS",
 			Action: expectArgs(1, func(ctx *cli.Context) error {
 				return setPrimitiveValueFromString(v, ctx.Args().First())
 			}),
@@ -107,8 +111,9 @@ func (c *constructor) makePrimitiveCommands(v reflect.Value) []cli.Command {
 func (c *constructor) makeMapCommands(v reflect.Value) []cli.Command {
 	return []cli.Command{
 		{
-			Name:  "dump",
-			Usage: "Dump all keys and their values",
+			Name:     "dump",
+			Usage:    "Dump all keys and their values",
+			Category: "ACTIONS",
 			Action: expectArgs(0, func(ctx *cli.Context) error {
 				for _, keyValue := range v.MapKeys() {
 					valueValue := v.MapIndex(keyValue)
@@ -129,6 +134,7 @@ func (c *constructor) makeMapCommands(v reflect.Value) []cli.Command {
 			Name:      "get",
 			ArgsUsage: "[key]",
 			Usage:     "Get the value of a given key",
+			Category:  "ACTIONS",
 			Action: expectArgs(1, func(ctx *cli.Context) error {
 				keyValue, err := stringToPrimitiveValue(ctx.Args().First(), v.Type().Key())
 				if err != nil {
@@ -142,6 +148,7 @@ func (c *constructor) makeMapCommands(v reflect.Value) []cli.Command {
 			Name:      "set",
 			ArgsUsage: "[key] [value]",
 			Usage:     "Set the key to the given value",
+			Category:  "ACTIONS",
 			Action: expectArgs(2, func(ctx *cli.Context) error {
 				keyValue, err := stringToPrimitiveValue(ctx.Args().First(), v.Type().Key())
 				if err != nil {
@@ -159,6 +166,7 @@ func (c *constructor) makeMapCommands(v reflect.Value) []cli.Command {
 			Name:      "unset",
 			ArgsUsage: "[key]",
 			Usage:     "Remove the key from the map",
+			Category:  "ACTIONS",
 			Action: expectArgs(1, func(ctx *cli.Context) error {
 				keyValue, err := stringToPrimitiveValue(ctx.Args().First(), v.Type().Key())
 				if err != nil {
@@ -173,8 +181,9 @@ func (c *constructor) makeMapCommands(v reflect.Value) []cli.Command {
 
 func makeJsonDumper(v reflect.Value, printer func(string)) cli.Command {
 	return cli.Command{
-		Name:        "dump-json",
-		Description: "Dump item as json",
+		Name:     "dump-json",
+		Usage:    "Dump item as json",
+		Category: "ACTIONS",
 		Action: expectArgs(0, func(ctx *cli.Context) error {
 			var vi interface{}
 			if v.CanAddr() && v.Addr().CanInterface() {
@@ -202,17 +211,17 @@ func (c *constructor) makeSliceAccessorCommands(keyer func(int) (string, error),
 		}
 		keyCmds, err := c.getCommandsForValue(v.Index(idx))
 		keyCmds = append(keyCmds, cli.Command{
-			Name:        "delete",
-			Description: fmt.Sprintf("Delete item represented by key %q from the collection", key),
+			Name:     "delete",
+			Usage:    fmt.Sprintf("Delete item represented by key %q from the collection", key),
+			Category: "ACTIONS",
 			Action: expectArgs(0, func(ctx *cli.Context) error {
 				v.Set(reflect.AppendSlice(v.Slice(0, idx), v.Slice(idx+1, v.Len())))
 				return nil
 			}),
-		}, makeJsonDumper(v.Index(idx), func(s string) {
-			c.cfg.ValuePrinter(s)
-		}))
+		})
 		cmds = append(cmds, cli.Command{
 			Name:        key,
+			Category:    "ITEMS",
 			Subcommands: keyCmds,
 		})
 	}
@@ -252,8 +261,9 @@ func (c *constructor) makeSliceCommands(v reflect.Value) ([]cli.Command, error) 
 	}
 
 	cmds = append(cmds, cli.Command{
-		Name:  "list",
-		Usage: "List item keys in the collection",
+		Name:     "list",
+		Usage:    "List item keys in the collection",
+		Category: "ACTIONS",
 		Action: expectArgs(0, func(ctx *cli.Context) error {
 			for vi := 0; vi < v.Len(); vi++ {
 				idx := vi // Copy loop variable
@@ -272,6 +282,7 @@ func (c *constructor) makeSliceCommands(v reflect.Value) ([]cli.Command, error) 
 			Name:      "add",
 			Usage:     "Add a new item to collection",
 			ArgsUsage: "[value]",
+			Category:  "ACTIONS",
 			Action: expectArgs(1, func(ctx *cli.Context) error {
 				newValue, err := stringToPrimitiveValue(ctx.Args().First(), member)
 				if err != nil {
@@ -347,6 +358,7 @@ func (c *constructor) makeSliceItemBuilders(v reflect.Value) []cli.Command {
 			Name:      "add",
 			Usage:     "Add a new item to collection",
 			ArgsUsage: "-attribute=value",
+			Category:  "ACTIONS",
 			Flags:     c.makeSliceItemBuilderFlags(memberType),
 			Action: expectArgs(0, func(ctx *cli.Context) error {
 				// Create a new item that will go in the slice
@@ -387,6 +399,7 @@ func (c *constructor) makeSliceItemBuilders(v reflect.Value) []cli.Command {
 			Name:      "add-json",
 			Usage:     "Add a new item to collection deserialised from JSON",
 			ArgsUsage: "[value]",
+			Category:  "ACTIONS",
 			Action: expectArgs(1, func(ctx *cli.Context) error {
 				newValue := reflect.New(memberType)
 				if err := json.Unmarshal([]byte(ctx.Args().First()), newValue.Interface()); err != nil {
@@ -428,6 +441,7 @@ func (c *constructor) Construct(item interface{}) ([]cli.Command, error) {
 		cmds = append(cmds, cli.Command{
 			Name:        c.cfg.FieldNameConverter(f.Name),
 			Usage:       f.Tag.Get(c.cfg.UsageTagName),
+			Category:    "PROPERTIES",
 			Subcommands: valueCmds,
 		})
 	}
