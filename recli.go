@@ -9,6 +9,7 @@ package recli
 import (
 	"encoding"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"reflect"
 
@@ -378,7 +379,7 @@ func (c *constructor) makeSliceItemBuilders(v reflect.Value) []cli.Command {
 					fieldValue := deref(newValue.Field(mi))
 					if ctx.IsSet(flagName) {
 						if isPrimitive(fieldValue) {
-							if err := setPrimitiveValueFromString(fieldValue, ctx.Generic(flagName).(string)); err != nil {
+							if err := setPrimitiveValueFromString(fieldValue, ctx.Generic(flagName).(flag.Value).String()); err != nil {
 								return err
 							}
 							continue
