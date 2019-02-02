@@ -361,6 +361,10 @@ func (c *constructor) makeSliceItemBuilders(v reflect.Value) []cli.Command {
 			Category:  "ACTIONS",
 			Flags:     c.makeSliceItemBuilderFlags(memberType),
 			Action: expectArgs(0, func(ctx *cli.Context) error {
+				if ctx.NumFlags() == 0 {
+					return errors.New("no properties specified")
+				}
+
 				// Create a new item that will go in the slice
 				newValue := reflect.New(memberType).Elem()
 
