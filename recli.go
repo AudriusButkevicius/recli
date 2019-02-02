@@ -365,7 +365,7 @@ func (c *constructor) makeSliceItemBuilders(v reflect.Value) []cli.Command {
 				newValue := reflect.New(memberType).Elem()
 
 				// Set defaults
-				if err := setDefaults(c.cfg.DefaultTagName, newValue.Addr().Interface()); err != nil {
+				if err := setDefaults(c.cfg.DefaultTagName, newValue.Addr().Interface(), nil); err != nil {
 					return err
 				}
 

@@ -157,53 +157,83 @@ func expectArgs(n int, actionFunc cli.ActionFunc) cli.ActionFunc {
 	}
 }
 
-func setDefaults(tagName string, data interface{}) error {
+func setDefaults(tagName string, data interface{}, seen map[uintptr]struct{}) error {
 	s := reflect.ValueOf(data).Elem()
 	t := s.Type()
+
+	if seen == nil {
+		seen = make(map[uintptr]struct{})
+	} else if s.CanAddr() {
+		if _, ok := seen[s.Addr().Pointer()]; ok {
+			return nil
+		}
+	}
+
+	seen[s.Addr().Pointer()] = struct{}{}
 
 	for i := 0; i < s.NumField(); i++ {
 		f := deref(s.Field(i))
 		tag := t.Field(i).Tag
 
-		v := tag.Get(tagName)
-		if len(v) > 0 {
+		if f.Kind() == reflect.Struct {
 			if f.CanAddr() && f.Addr().CanInterface() {
-				if i, ok := f.Addr().Interface().(ParseDefaulter); ok {
-					return i.ParseDefault(v)
+				err := setDefaults(tagName, f.Addr().Interface(), seen)
+				if err != nil {
+					return err
 				}
+				continue
 			}
-
-			if isPrimitive(f) {
-				return setPrimitiveValueFromString(f, v)
-			}
-
-			switch f.Kind() {
-			case reflect.Array, reflect.Slice:
-				switch simplifyKind(f.Elem().Kind()) {
-				case reflect.Int:
-					var m []int
-					for _, si := range strings.Split(v, ",") {
-						i, err := strconv.ParseInt(si, 10, 64)
-						if err != nil {
-							return err
-						}
-						m = append(m, int(i))
-					}
-					f.Set(reflect.ValueOf(m))
-					return nil
-				case reflect.String:
-					var m []string
-					for _, i := range strings.Split(v, ",") {
-						m = append(m, i)
-					}
-					f.Set(reflect.ValueOf(m))
-					return nil
-				}
-			}
-
-			return errors.Wrap(unsupportedKindErr(f.Kind()), "setDefaults")
 		}
+
+		v := tag.Get(tagName)
+		if len(v) == 0 {
+			continue
+		}
+
+		if f.CanAddr() && f.Addr().CanInterface() {
+			if i, ok := f.Addr().Interface().(ParseDefaulter); ok {
+				if err := i.ParseDefault(v); err != nil {
+					return err
+				}
+				continue
+			}
+		}
+
+		if isPrimitive(f) {
+			err := setPrimitiveValueFromString(f, v)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+
+		switch f.Kind() {
+		case reflect.Array, reflect.Slice:
+			switch simplifyKind(f.Type().Elem().Kind()) {
+			case reflect.Int:
+				var m []int
+				for _, si := range strings.Split(v, ",") {
+					i, err := strconv.ParseInt(si, 10, 64)
+					if err != nil {
+						return err
+					}
+					m = append(m, int(i))
+				}
+				f.Set(reflect.ValueOf(m))
+				continue
+			case reflect.String:
+				var m []string
+				for _, i := range strings.Split(v, ",") {
+					m = append(m, i)
+				}
+				f.Set(reflect.ValueOf(m))
+				continue
+			}
+		}
+
+		return errors.Wrap(unsupportedKindErr(f.Kind()), "setDefaults")
 	}
+
 	return nil
 }
 
