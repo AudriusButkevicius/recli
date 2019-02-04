@@ -281,11 +281,14 @@ USAGE:
    main.exe backends command [command options] [arguments...]
 
 COMMANDS:
-     backend1.com
-     backend2.com
+  ACTIONS:
      add           Add a new item to collection
      add-json      Add a new item to collection deserialised from JSON
 
+  ITEMS:
+     backend1.com
+     backend2.com
+     
 OPTIONS:
    --help, -h  show help
 
