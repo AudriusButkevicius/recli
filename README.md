@@ -19,7 +19,6 @@ Useful for generating command line clients for your application configuration th
 
 ## Known limitations
 
-* Only primitive types supported for defaults
 * Adding new struct to a slice only allows setting primitive fields (use add-json as a work-around)
 * Only primitive types supported for map keys and values
 * No defaults for maps
@@ -47,6 +46,30 @@ type Backend struct {
 
 type ThreadingOptions struct {
 	MaxThreads int
+}
+```
+
+Sample input data
+```json
+{
+   "Address":"http://website.com",
+   "AuthMode":"static",
+   "ThreadingOptions":{
+      "MaxThreads":10
+   },
+   "Backends":[
+      {
+         "Hostname":"backend1.com",
+         "Port":1010
+      },
+      {
+         "Hostname":"backend2.com",
+         "Port":2020
+      }
+   ],
+   "EnvVars":{
+      "CC":"/usr/bin/gcc"
+   }
 }
 ```
 
