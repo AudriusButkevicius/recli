@@ -25,9 +25,7 @@ type ParseDefaulter interface {
 }
 
 var (
-	textMarshaler   = reflect.TypeOf(new(encoding.TextMarshaler)).Elem()
 	textUnmarshaler = reflect.TypeOf(new(encoding.TextUnmarshaler)).Elem()
-	defaultParser   = reflect.TypeOf(new(ParseDefaulter)).Elem()
 )
 
 func hasTag(field reflect.StructField, tag Tag) bool {

@@ -310,7 +310,7 @@ func (c *constructor) makeSliceItemBuilderFlags(memberType reflect.Type) []cli.F
 		}
 
 		memberKind := simplifyKind(memberField.Type.Kind())
-		memberKindIsTextUnmarshaler := memberField.Type.Implements(textUnmarshaler)
+		memberKindIsTextUnmarshaler := memberField.Type.Implements(textUnmarshaler) || reflect.PtrTo(memberField.Type).Implements(textUnmarshaler)
 
 		switch {
 		case memberKind == reflect.Bool:
@@ -335,7 +335,8 @@ func (c *constructor) makeSliceItemBuilderFlags(memberType reflect.Type) []cli.F
 			})
 		case memberKind == reflect.Array || memberKind == reflect.Slice:
 			arrayKind := simplifyKind(memberField.Type.Elem().Kind())
-			arrayKindIsTextUnmarshaler := memberField.Type.Elem().Implements(textUnmarshaler)
+			elemType := memberField.Type.Elem()
+			arrayKindIsTextUnmarshaler := elemType.Implements(textUnmarshaler) || reflect.PtrTo(elemType).Implements(textUnmarshaler)
 			switch {
 			case arrayKind == reflect.Int:
 				flags = append(flags, cli.Int64SliceFlag{
