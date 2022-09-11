@@ -388,7 +388,7 @@ func (c *constructor) makeSliceItemBuilders(v reflect.Value) []cli.Command {
 
 						switch fieldValue.Kind() {
 						case reflect.Array, reflect.Slice:
-							switch simplifyKind(fieldValue.Elem().Kind()) {
+							switch simplifyKind(fieldValue.Kind()) {
 							case reflect.Int:
 								fieldValue.Set(reflect.ValueOf(ctx.IntSlice(flagName)))
 							case reflect.String:
