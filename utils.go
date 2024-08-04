@@ -149,7 +149,7 @@ func expectArgs(n int, actionFunc cli.ActionFunc) cli.ActionFunc {
 			if n != 1 {
 				pluarl = "s"
 			}
-			return fmt.Errorf("expected %d arugment%s, got %d", n, pluarl, ctx.NArg())
+			return fmt.Errorf("expected %d argument%s, got %d", n, pluarl, ctx.NArg())
 		}
 		return actionFunc(ctx)
 	}
