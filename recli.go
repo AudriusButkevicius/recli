@@ -190,7 +190,7 @@ func makeJsonDumper(v reflect.Value, printer func(string)) cli.Command {
 			if v.CanAddr() && v.Addr().CanInterface() {
 				vi = v.Addr().Interface()
 			} else {
-				return fmt.Errorf("Cannot dump %s as json", v.Type())
+				return fmt.Errorf("cannot dump %s as json", v.Type())
 			}
 			bytes, err := json.MarshalIndent(vi, "", "  ")
 			if err != nil {
@@ -211,6 +211,9 @@ func (c *constructor) makeSliceAccessorCommands(keyer func(int) (string, error),
 			return nil, err
 		}
 		keyCmds, err := c.getCommandsForValue(v.Index(idx))
+		if err != nil {
+			return nil, errors.Wrap(err, fmt.Sprintf("failed to get commands for key %s", key))
+		}
 		keyCmds = append(keyCmds, cli.Command{
 			Name:     "delete",
 			Usage:    fmt.Sprintf("Delete item represented by key %q from the collection", key),
@@ -388,7 +391,8 @@ func (c *constructor) makeSliceItemBuilders(v reflect.Value) []cli.Command {
 
 						switch fieldValue.Kind() {
 						case reflect.Array, reflect.Slice:
-							switch simplifyKind(fieldValue.Kind()) {
+							elemKind := simplifyKind(fieldValue.Type().Elem().Kind())
+							switch elemKind {
 							case reflect.Int:
 								fieldValue.Set(reflect.ValueOf(ctx.IntSlice(flagName)))
 							case reflect.String:
